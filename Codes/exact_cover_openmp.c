@@ -546,7 +546,7 @@ struct context_t * copy_context_t(const struct context_t *c)
         /* Copies des entiers*/
         ctx->level = c->level;
         ctx->nodes = c->nodes;
-        ctx->solutions = c->solutions;
+        ctx->solutions = 0;
 
         /* Allocation de mémoire des attributs de copie*/
         ctx->chosen_options = (int *)malloc(n_items*sizeof(ctx->chosen_options));
@@ -608,8 +608,8 @@ void free_context_t(struct context_t *ctx)
                 ctx->active_options[item] = NULL;
         }
         free(ctx->active_options);
+        free(ctx);
 }
-
 
 void solve(const struct instance_t *instance, struct context_t *ctx)
 {
@@ -626,21 +626,66 @@ void solve(const struct instance_t *instance, struct context_t *ctx)
                 return;           /* échec : impossible de couvrir chosen_item */
         cover(instance, ctx, chosen_item);
         ctx->num_children[ctx->level] = active_options->len;
-        
         for (int k = 0; k < active_options->len; k++) {
                 int option = active_options->p[k];
                 ctx->child_num[ctx->level] = k;
                 choose_option(instance, ctx, option, chosen_item);
-                struct context_t * copy = copy_context_t(ctx);
-                #pragma omp task
-                solve(instance, copy);
+                solve(instance, ctx);
                 if (ctx->solutions >= max_solutions)
                         return;
                 unchoose_option(instance, ctx, option, chosen_item);
         }
-        #pragma omp taskwait
+
+        uncover(instance, ctx, chosen_item);                      /* backtrack */
+        
+}
+
+void solve_omp(const struct instance_t *instance, struct context_t *ctx)
+{
+        ctx->nodes++;
+        if (ctx->nodes == next_report)
+                progress_report(ctx);
+        if (sparse_array_empty(ctx->active_items)) {
+                solution_found(instance, ctx);
+                return;                         /* succès : plus d'objet actif */
+        }
+        int chosen_item = choose_next_item(ctx);
+        struct sparse_array_t *active_options = ctx->active_options[chosen_item];
+        if (sparse_array_empty(active_options))
+                return;           /* échec : impossible de couvrir chosen_item */
+        cover(instance, ctx, chosen_item);
+        ctx->num_children[ctx->level] = active_options->len;
+        
+        for (int k = 0; k < active_options->len; k++) { 
+            /* faire attention la création de tâche est longue, soit mettre une condition sur le level , soit sur le nombre de tâches à créer
+            level => la place dans l'arbre, plus level est grand et plus on est profond
+            mais attention avec un level on peut avoir un problème d'équilibre de charge */
+                int option = active_options->p[k];
+                ctx->child_num[ctx->level] = k;
+                choose_option(instance, ctx, option, chosen_item);
+                if(ctx->level < 2){
+                    struct context_t * copy = copy_context_t(ctx);
+                    #pragma omp task 
+                    {
+                        solve_omp(instance, copy);
+                        ctx->solutions += copy->solutions;
+                        printf("solutions trouvees openmp: %lld\n",copy->solutions);
+                        free_context_t(copy);
+                    } 
+                }
+                else {
+                    solve(instance,ctx);
+                    printf("solutions trouvees sequentiellement: %lld\n",ctx->solutions);
+                    if (ctx->solutions >= max_solutions)
+                        return;
+                    
+                }
+                unchoose_option(instance, ctx, option, chosen_item);
+        }
         uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
+
+
 
 int main(int argc, char **argv)
 {
@@ -676,21 +721,22 @@ int main(int argc, char **argv)
 
         struct context_t * ctx; //declarer hors le pragma donc c'est une variable globale
 
-        #pragma omp parallel // creation de thread
+        #pragma omp parallel  // creation de thread
         {
                 start = wtime();
                 #pragma omp single //un thread est appelé
                 {
                         struct instance_t * instance = load_matrix(in_filename); //la matrice se trouve dans le thread maitre
                         ctx = backtracking_setup(instance);
-                        solve(instance,ctx);
+                        solve_omp(instance,ctx);
                 }
 
         }       
         
         printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions,wtime() - start);
-        exit(EXIT_SUCCESS);
         free_context_t(ctx);
+        exit(EXIT_SUCCESS);
+        
 }
 
 

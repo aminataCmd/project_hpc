@@ -226,8 +226,9 @@ int choose_next_item(struct context_t *ctx)
 void progress_report(const struct context_t *ctx)
 {
         double now = wtime();
-        printf("Exploré %lld noeuds, trouvé %lld solutions, temps écoulé %.1fs. ", 
+        printf("Exploré %lld noeuds, trouvé %lld solutions, temps écoulé %.1fs.\n ", 
                         ctx->nodes, ctx->solutions, now - start);
+        //printf("level = %d\n",ctx->level);
         int i = 0;
         for (int k = 0; k < ctx->level; k++) {
                 if (i > 44)
@@ -544,6 +545,7 @@ void solve(const struct instance_t *instance, struct context_t *ctx)
         }
 
         uncover(instance, ctx, chosen_item);                      /* backtrack */
+        
 }
 
 int main(int argc, char **argv)
@@ -585,6 +587,7 @@ int main(int argc, char **argv)
         solve(instance, ctx);
         printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, 
                         wtime() - start);
+        
         exit(EXIT_SUCCESS);
 }
 
