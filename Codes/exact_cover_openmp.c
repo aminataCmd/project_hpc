@@ -518,6 +518,99 @@ struct context_t * backtracking_setup(const struct instance_t *instance)
         return ctx;
 }
 
+/* Fonction qui copie une struct sparse_array_t */
+struct sparse_array_t* copy_sparse_array(const struct sparse_array_t *c)
+{       
+        struct sparse_array_t *ctx = malloc(sizeof(struct sparse_array_t));
+        ctx->len = c->len; //taille p,q
+        ctx->capacity = c->capacity;
+
+        ctx->p = (int *)malloc(c->capacity *sizeof(int));
+        ctx->q = (int *)malloc(c->capacity *sizeof(int));
+        for(int i = 0; i < c->capacity; i++){
+                ctx->p[i] = c->p[i];
+                ctx->q[i] = c->q[i];
+        }
+
+        return ctx;
+}
+
+/* Fonction qui copie une struct context_t */
+struct context_t * copy_context_t(const struct context_t *c)
+{       
+        int n_items = c->active_items->capacity;
+
+        /* Allocation memoire de la copie */
+        struct context_t *ctx = (struct context_t *) malloc(sizeof(*ctx));
+
+        /* Copies des entiers*/
+        ctx->level = c->level;
+        ctx->nodes = c->nodes;
+        ctx->solutions = c->solutions;
+
+        /* Allocation de mémoire des attributs de copie*/
+        ctx->chosen_options = (int *)malloc(n_items*sizeof(ctx->chosen_options));
+        ctx->child_num = (int *)malloc(n_items*sizeof(ctx->child_num));
+        ctx->num_children = (int *)malloc(n_items*sizeof(ctx->num_children));
+
+        /*Copie de active_items*/
+        ctx->active_items = copy_sparse_array(c->active_items);
+
+        /*Copie de active_options*/
+        ctx->active_options = malloc(n_items * sizeof(*ctx->active_options));
+        for (int item = 0; item < n_items; item++){
+                ctx->active_options[item] = copy_sparse_array(c->active_options[item]);
+
+                ctx->chosen_options[item] = c->chosen_options[item];
+                ctx->child_num[item] = c->child_num[item];
+                ctx->num_children[item] = c->num_children[item];
+        }
+        
+        return ctx;
+}
+
+void free_sparse_array(struct sparse_array_t * s)
+{
+        s->len = 0;
+        s->capacity = 0;
+        free(s->p);
+        s->p = NULL;
+        free(s->q);
+        s->q = NULL;
+
+        free(s);
+        s = NULL;
+}
+
+/* Permet de free le contexte */
+void free_context_t(struct context_t *ctx)
+{
+        int n_items = ctx->active_items->capacity;
+
+        ctx->level = 0;
+        ctx->nodes = 0;
+        ctx->solutions = 0;
+
+        free(ctx->chosen_options);
+        ctx->chosen_options = NULL;
+
+        free(ctx->num_children);
+        ctx->num_children = NULL;
+
+        free(ctx->child_num);
+        ctx->child_num = NULL;
+
+        free_sparse_array(ctx->active_items);
+
+        /* free active_options */
+        for (int item = 0; item < n_items; item++){
+                free(ctx->active_options[item]);
+                ctx->active_options[item] = NULL;
+        }
+        free(ctx->active_options);
+}
+
+
 void solve(const struct instance_t *instance, struct context_t *ctx)
 {
         ctx->nodes++;
@@ -533,16 +626,19 @@ void solve(const struct instance_t *instance, struct context_t *ctx)
                 return;           /* échec : impossible de couvrir chosen_item */
         cover(instance, ctx, chosen_item);
         ctx->num_children[ctx->level] = active_options->len;
+        
         for (int k = 0; k < active_options->len; k++) {
                 int option = active_options->p[k];
                 ctx->child_num[ctx->level] = k;
                 choose_option(instance, ctx, option, chosen_item);
-                solve(instance, ctx);
+                struct context_t * copy = copy_context_t(ctx);
+                #pragma omp task
+                solve(instance, copy);
                 if (ctx->solutions >= max_solutions)
                         return;
                 unchoose_option(instance, ctx, option, chosen_item);
         }
-
+        #pragma omp taskwait
         uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
 
@@ -578,14 +674,23 @@ int main(int argc, char **argv)
                 usage(argv);
         next_report = report_delta;
 
+        struct context_t * ctx; //declarer hors le pragma donc c'est une variable globale
 
-        struct instance_t * instance = load_matrix(in_filename);
-        struct context_t * ctx = backtracking_setup(instance);
-        start = wtime();
-        solve(instance, ctx);
-        printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, 
-                        wtime() - start);
+        #pragma omp parallel // creation de thread
+        {
+                start = wtime();
+                #pragma omp single //un thread est appelé
+                {
+                        struct instance_t * instance = load_matrix(in_filename); //la matrice se trouve dans le thread maitre
+                        ctx = backtracking_setup(instance);
+                        solve(instance,ctx);
+                }
+
+        }       
+        
+        printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions,wtime() - start);
         exit(EXIT_SUCCESS);
+        free_context_t(ctx);
 }
 
 

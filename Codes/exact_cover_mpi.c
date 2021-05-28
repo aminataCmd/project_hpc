@@ -483,48 +483,6 @@ struct instance_t * load_matrix(const char *filename)
         return instance;
 }
 
-void copy_context_t(struct context_t *ctx,const struct context_t *c){
-    int n = c->active_items->capacity; //n_items
-    int m = c->active_options[0]->capacity; //n_options
-
-    struct context_t *ctx = (struct context_t *) malloc(sizeof(*ctx));
-
-    ctx->level = c->level;
-    ctx->nodes = c->nodes;
-    ctx->solutions = c->solutions;
-
-    ctx->chosen_options = malloc(n * sizeof(*ctx->chosen_options));
-    ctx->child_num = malloc(n * sizeof(*ctx->child_num));
-    ctx->num_children = malloc(n * sizeof(*ctx->num_children));
-
-    for(int item = 0; item < n; item++){
-        ctx->chosen_options[item] = c->chosen_options[item];
-        ctx->child_num[item] = c->child_num[item];
-        ctx->num_children[item] = c->num_children[item];
-
-    }
-
-    /*Copie de active_items*/
-
-    ctx->active_items = sparse_array_init(n);
-    ctx->active_items->len = c->active_items->len;
-    for (int item = 0; item < c->active_items->len; item++)
-        sparse_array_add(ctx->active_items, c->active_items->p[item]);  
-
-    /*Copie de active_options*/
-
-    ctx->active_options = malloc(n * sizeof(*ctx->active_options));
-    for (int item = 0; item < n; item++){
-        ctx->active_options[item] = sparse_array_init(m);
-        ctx->active_options[item]->len = c->active_options[item]->len;
-    }
-    for (int item = 0; item < n; item++){
-        for(int item2 = 0; item2 < c->active_options[item]->len;item2++)
-            sparse_array_add(ctx->active_options[item],c->active_options[item]->p[item2]);
-    }
-
-    //return ctx;   
-}
 
 
 struct context_t * backtracking_setup(const struct instance_t *instance)
