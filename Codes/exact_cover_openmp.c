@@ -669,7 +669,6 @@ void solve_omp(const struct instance_t *instance, struct context_t *ctx)
                     {
                         solve_omp(instance, copy);
                         ctx->solutions += copy->solutions;
-                        printf("solutions trouvees openmp: %lld\n",copy->solutions);
                         free_context_t(copy);
                     } 
                 }
@@ -678,11 +677,10 @@ void solve_omp(const struct instance_t *instance, struct context_t *ctx)
                     printf("solutions trouvees sequentiellement: %lld\n",ctx->solutions);
                     if (ctx->solutions >= max_solutions)
                         return;
-                    
                 }
                 unchoose_option(instance, ctx, option, chosen_item);
         }
-        uncover(instance, ctx, chosen_item);                      /* backtrack */
+        //uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
 
 
@@ -721,7 +719,7 @@ int main(int argc, char **argv)
 
         struct context_t * ctx; //declarer hors le pragma donc c'est une variable globale
 
-        #pragma omp parallel  // creation de thread
+        #pragma omp parallel  // creer une equipe de thread
         {
                 start = wtime();
                 #pragma omp single //un thread est appelé
