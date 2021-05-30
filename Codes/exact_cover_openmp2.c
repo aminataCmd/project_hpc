@@ -663,13 +663,14 @@ void solve_omp(const struct instance_t *instance, struct context_t *ctx)
                 int option = active_options->p[k];
                 ctx->child_num[ctx->level] = k;
                 choose_option(instance, ctx, option, chosen_item);
-                if(ctx->level < 2){
+                if(num_tasks < 15){
                     struct context_t * copy = copy_context_t(ctx);
                     #pragma omp task 
-                    {
-                        num_tasks++;
+                    {              
+                        #pragma omp atomic 
+                        num_tasks++;            
                         solve_omp(instance, copy);
-                        ctx->solutions += copy->solutions;
+                        ctx->solutions += copy->solutions; //ajout des solutions trouvées par la copie
                         free_context_t(copy);
                     } 
                 }
@@ -719,7 +720,7 @@ int main(int argc, char **argv)
 
         struct context_t * ctx; //declarer hors le pragma donc c'est une variable globale
 
-        #pragma omp parallel // creer une equipe de thread
+        #pragma omp parallel  // creer une equipe de thread
         {
                 start = wtime();
                 #pragma omp single //un thread est appelé

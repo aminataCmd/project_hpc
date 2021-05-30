@@ -587,6 +587,8 @@ int main(int argc, char **argv)
         solve(instance, ctx);
         printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, 
                         wtime() - start);
+        printf("======================================================== \n");
+
         
         exit(EXIT_SUCCESS);
 }
