@@ -6,7 +6,7 @@
 #include <err.h>
 #include <getopt.h>
 #include <sys/time.h>
-
+#include <mpi.h>
 /* changelog :
 2021-04-12 18:30, instance->n_primary was not properly initialized
 */
@@ -518,6 +518,105 @@ struct context_t * backtracking_setup(const struct instance_t *instance)
 
         return ctx;
 }
+
+
+
+
+
+struct sparse_array_t* copy_sparse_array(const struct sparse_array_t *c)
+{       
+        struct sparse_array_t *ctx = malloc(sizeof(struct sparse_array_t));
+        ctx->len = c->len; //taille p,q
+        ctx->capacity = c->capacity;
+
+        ctx->p = (int *)malloc(c->capacity *sizeof(int));
+        ctx->q = (int *)malloc(c->capacity *sizeof(int));
+        for(int i = 0; i < c->capacity; i++){
+                ctx->p[i] = c->p[i];
+                ctx->q[i] = c->q[i];
+        }
+
+        return ctx;
+}
+
+/* Fonction qui copie une struct context_t */
+struct context_t * copy_context_t(const struct context_t *c)
+{       
+        int n_items = c->active_items->capacity;
+
+        /* Allocation memoire de la copie */
+        struct context_t *ctx = (struct context_t *) malloc(sizeof(*ctx));
+
+        /* Copies des entiers*/
+        ctx->level = c->level;
+        ctx->nodes = c->nodes;
+        ctx->solutions = 0;
+
+        /* Allocation de mémoire des attributs de copie*/
+        ctx->chosen_options = (int *)malloc(n_items*sizeof(ctx->chosen_options));
+        ctx->child_num = (int *)malloc(n_items*sizeof(ctx->child_num));
+        ctx->num_children = (int *)malloc(n_items*sizeof(ctx->num_children));
+
+        /*Copie de active_items*/
+        ctx->active_items = copy_sparse_array(c->active_items);
+
+        /*Copie de active_options*/
+        ctx->active_options = malloc(n_items * sizeof(*ctx->active_options));
+        for (int item = 0; item < n_items; item++){
+                ctx->active_options[item] = copy_sparse_array(c->active_options[item]);
+
+                ctx->chosen_options[item] = c->chosen_options[item];
+                ctx->child_num[item] = c->child_num[item];
+                ctx->num_children[item] = c->num_children[item];
+        }
+        
+        return ctx;
+}
+
+void free_sparse_array(struct sparse_array_t * s)
+{
+        s->len = 0;
+        s->capacity = 0;
+        free(s->p);
+        s->p = NULL;
+        free(s->q);
+        s->q = NULL;
+
+        free(s);
+        s = NULL;
+}
+
+/* Permet de free le contexte */
+void free_context_t(struct context_t *ctx)
+{
+        int n_items = ctx->active_items->capacity;
+
+        ctx->level = 0;
+        ctx->nodes = 0;
+        ctx->solutions = 0;
+
+        free(ctx->chosen_options);
+        ctx->chosen_options = NULL;
+
+        free(ctx->num_children);
+        ctx->num_children = NULL;
+
+        free(ctx->child_num);
+        ctx->child_num = NULL;
+
+        free_sparse_array(ctx->active_items);
+
+        /* free active_options */
+        for (int item = 0; item < n_items; item++){
+                free(ctx->active_options[item]);
+                ctx->active_options[item] = NULL;
+        }
+        free(ctx->active_options);
+        free(ctx);
+}
+
+
+
 // Il faut paralléliser la fonction solve
 /* L'idée c'est qu'à chaque thread que l'on créee , on lui donne une partie du boulot ie on lui 
 donne le context_t qui est une structure qui représente l'avancement de solutions*/
@@ -548,6 +647,147 @@ void solve(const struct instance_t *instance, struct context_t *ctx)
 
         uncover(instance, ctx, chosen_item);                      /* backtrack */
 }
+int* print_comm_ranks(MPI_Comm comm)
+{
+   MPI_Group grp, world_grp;
+
+  MPI_Comm_group(MPI_COMM_WORLD, &world_grp);
+   MPI_Comm_group(comm, &grp);
+
+   int grp_size;
+
+   MPI_Group_size(world_grp, &grp_size);
+
+   int *ranks = malloc(grp_size * sizeof(int));
+   int *world_ranks = malloc(grp_size * sizeof(int));
+
+   for (int i = 0; i < grp_size; i++)
+      ranks[i] = i;
+
+   MPI_Group_translate_ranks(grp, grp_size, ranks, world_grp, world_ranks);
+
+   return world_ranks;
+
+   free(ranks); free(world_ranks);
+
+   MPI_Group_free(&grp);
+   MPI_Group_free(&world_grp);
+
+}
+
+void solve_mpi(const struct instance_t *instance, struct context_t *ctx){
+
+	int rang;
+        int p;
+        MPI_Init();
+        MPI_Status status;
+        MPI_Comm_size(MPI_COMM_WORLD, &p);
+        MPI_Comm_rank(MPI_COMM_WORLD, &rang);
+        MPI_Request request;
+	    ctx->nodes++;
+	    
+	   /* ----------------------------On construit une liste avec le rang de tt les processeurs------------------------------*/
+	      MPI_Group grp, world_grp;
+
+        MPI_Comm_group(MPI_COMM_WORLD, &world_grp);
+        MPI_Comm_group(comm, &grp);
+
+        int grp_size;
+
+        MPI_Group_size(world_grp, &grp_size);
+
+        int *ranks = malloc(grp_size * sizeof(int));
+        int *world_ranks = malloc(grp_size * sizeof(int));
+
+        for (int i = 0; i < grp_size; i++){
+        ranks[i] = i;
+    	}
+        MPI_Group_translate_ranks(grp, grp_size, ranks, world_grp, world_ranks);
+
+	   /*--------------------------------------------------------------------------------------------------------------------*/ 
+        if (ctx->nodes == next_report)
+                progress_report(ctx);
+        if (sparse_array_empty(ctx->active_items)) {
+                solution_found(instance, ctx);
+                return;                         /* succès : plus d'objet actif */
+        }
+        
+        if (rang==0){
+        
+        int chosen_item = choose_next_item(ctx);
+        struct sparse_array_t *active_options = ctx->active_options[chosen_item];
+        if (sparse_array_empty(active_options))
+                return;           /* échec : impossible de couvrir chosen_item */
+        cover(instance, ctx, chosen_item);
+        ctx->num_children[ctx->level] = active_options->len;
+
+
+
+
+        for (int k = 0; k < active_options->len; k++) {
+         	int option = active_options->p[k];
+                ctx->child_num[ctx->level] = k;
+                choose_option(instance, ctx, option, chosen_item);
+                if(ctx->level < 2){
+                    struct context_t * copy = copy_context_t(ctx);
+					/*le première itération on envoie des taches à tout les processeurs*/
+                        if(k==0){
+                        	for (int i = 0; i < grp_size ; ++i)
+                        	{
+                        		if (world_ranks[i] != 0)
+                        		{
+                        			MPI_Isend(copy,ctx->active_items->len, MPI_LONG_LONG, world_ranks[i],MPI_ANY_TAG, MPI_COMM_WORLD,&request);
+                        		}
+                        		
+                        	}
+                        }
+
+                        	else{
+
+                        	MPI_Irecv(&(ctx->solutions),1,MPI_LONG_LONG,0,MPI_ANY_TAG, MPI_COMM_WORLD, &request);
+                        	
+                        	MPI_Isend(copy,ctx->active_items->len, MPI_LONG_LONG, status.MPI_SOURCE,MPI_ANY_TAG, MPI_COMM_WORLD,&request);
+                         }
+
+                        }
+                   else {
+                    solve(instance,ctx);
+                    printf("solutions trouvees sequentiellement: %lld\n",ctx->solutions);
+                    if (ctx->solutions >= max_solutions)
+                        return;
+                }
+
+            
+      
+                unchoose_option(instance, ctx, option, chosen_item);
+        
+        uncover(instance, ctx, chosen_item);                      /* backtrack */
+        
+        
+        }
+        
+        
+         if (rang != 0)
+         {	
+            struct context_t * copy = copy_context_t(ctx);
+         	MPI_Irecv(copy, ctx->active_items->len , MPI_LONG_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD,&request);
+        	solve(instance,copy);
+        	ctx->solutions += copy->solutions;
+            free_context_t(copy);
+            MPI_Isend(&(ctx->solutions),1,MPI_LONG_LONG,0,MPI_ANY_TAG, MPI_COMM_WORLD, &request);
+            
+         }
+        
+
+
+            free(ranks); free(world_ranks);
+       		MPI_Group_free(&grp);
+        	MPI_Group_free(&world_grp);
+        MPI_Finalize();  
+
+}
+
+
 
 int main(int argc, char **argv)
 {
@@ -558,6 +798,11 @@ int main(int argc, char **argv)
                 {"stop-after", required_argument, NULL, 's'},
                 {NULL, 0, NULL, 0}
         };
+        int rank;
+        int proc;
+        MPI_Init(&argc, &argv);
+        MPI_Comm_size(MPI_COMM_WORLD, &proc);
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
         char ch;
         while ((ch = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
                 switch (ch) {
@@ -581,13 +826,14 @@ int main(int argc, char **argv)
                 usage(argv);
         next_report = report_delta;
 
-
+        
         struct instance_t * instance = load_matrix(in_filename);
         struct context_t * ctx = backtracking_setup(instance);
         start = wtime();
-        solve(instance, ctx);
+        solve_mpi(instance, ctx);
         printf("FINI. Trouvé %lld solutions en %.1fs\n", ctx->solutions, 
                         wtime() - start);
+        
         exit(EXIT_SUCCESS);
 }
 
